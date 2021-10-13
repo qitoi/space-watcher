@@ -23,9 +23,10 @@ import (
 	"time"
 
 	twitter11 "github.com/dghubble/go-twitter/twitter"
-	"github.com/jmoiron/sqlx"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/qitoi/spaces-notify-bot/bot"
+	"github.com/qitoi/spaces-notify-bot/db"
 	"github.com/qitoi/spaces-notify-bot/oauth1"
 	twitter2 "github.com/qitoi/spaces-notify-bot/twitter"
 )
@@ -38,8 +39,8 @@ func (c *Command) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, err := OpenDB("./spaces-notify-bot.db")
-	defer db.Close()
+	dbClient, err := db.Open("./space-notify-bot.db")
+	defer dbClient.Close()
 
 	auth := oauth1.NewAuth(c.Config.Twitter.ConsumerKey, c.Config.Twitter.ConsumerSecret)
 	httpClient := auth.GetHttpClient(context.Background(), c.Config.Twitter.AccessToken, c.Config.Twitter.AccessSecret)
@@ -65,7 +66,7 @@ func (c *Command) Start() error {
 			return err
 		}
 
-		err = c.notify(db, clientV11, spaces, users)
+		err = c.notify(dbClient, clientV11, spaces, users)
 		if err != nil {
 			return err
 		}
@@ -118,7 +119,7 @@ func (c *Command) searchSpaces(ctx context.Context, clientV2 *twitter2.Client, c
 	return spaces, users, rate, nil
 }
 
-func (c *Command) notify(db *sqlx.DB, clientV11 *twitter11.Client, spaces []twitter2.Space, users map[string]twitter2.User) error {
+func (c *Command) notify(dbClient *db.Client, clientV11 *twitter11.Client, spaces []twitter2.Space, users map[string]twitter2.User) error {
 	ch := make(chan error)
 	var wg sync.WaitGroup
 
@@ -128,7 +129,7 @@ func (c *Command) notify(db *sqlx.DB, clientV11 *twitter11.Client, spaces []twit
 		u := users[s.CreatorID]
 		go func() {
 			defer wg.Done()
-			if !CheckNotified(db, s.ID) {
+			if !dbClient.CheckNotified(s.ID) {
 				c.Logger.Infow("notify", "space", s, "user", u)
 
 				tweetID, err := c.tweetSpace(clientV11, s, u)
@@ -136,14 +137,14 @@ func (c *Command) notify(db *sqlx.DB, clientV11 *twitter11.Client, spaces []twit
 					ch <- err
 					return
 				}
-				ch <- RegisterNotified(db, SpaceRecord{
-					ID:            s.ID,
-					CreatorID:     s.CreatorID,
+				ch <- dbClient.RegisterNotified(&db.Space{
+					Id:            s.ID,
+					CreatorId:     u.ID,
 					ScreenName:    u.Username,
 					Title:         s.Title,
-					NotifyTweetID: tweetID,
-					StartedAt:     *s.StartedAt,
-					CreatedAt:     *s.CreatedAt,
+					NotifyTweetId: tweetID,
+					StartedAt:     timestamppb.New(*s.StartedAt),
+					CreatedAt:     timestamppb.New(*s.CreatedAt),
 				})
 			}
 		}()

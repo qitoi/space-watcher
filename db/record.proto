@@ -1,0 +1,15 @@
+syntax = "proto3";
+package db;
+option go_package = "github.com/qitoi/spaces-notify-bot/db";
+
+import "google/protobuf/timestamp.proto";
+
+message Space {
+  string id = 1;
+  string creator_id = 2;
+  string screen_name = 3;
+  string title = 4;
+  int64 notify_tweet_id = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
