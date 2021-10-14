@@ -4,5 +4,8 @@ twitter:
 bot:
     search_interval: 5
     message: |
-        {{.User.Name | escape}}さんがスペースを開始しました
+        {{.User.Name | escape}} さんがスペースを開始しました
         {{.URL}}
+healthcheck:
+    enabled: false
+    port: 18080

@@ -37,9 +37,15 @@ type BotConfig struct {
 	Message        string `yaml:"message"`
 }
 
+type HealthCheckConfig struct {
+	Enabled *bool `yaml:"enabled"`
+	Port    *int  `yaml:"port"`
+}
+
 type Config struct {
-	Twitter TwitterConfig
-	Bot     BotConfig
+	Twitter     TwitterConfig      `yaml:"twitter"`
+	Bot         BotConfig          `yaml:"bot"`
+	HealthCheck *HealthCheckConfig `yaml:"healthcheck"`
 }
 
 func SaveConfig(config Config) error {
@@ -105,6 +111,21 @@ func CheckValidConfig(config Config) error {
 	}
 	if config.Bot.Message == "" {
 		return errors.New("invalid config: bot.message")
+	}
+	if config.HealthCheck != nil {
+		if config.HealthCheck.Enabled == nil {
+			return errors.New("config not found: healthcheck.enabled")
+		}
+		if *config.HealthCheck.Enabled {
+			if config.HealthCheck.Port == nil {
+				return errors.New("config not found: healthcheck.port")
+			}
+		}
+		if config.HealthCheck.Port != nil {
+			if *config.HealthCheck.Port <= 0 || *config.HealthCheck.Port > 65535 {
+				return errors.New("invalid config: healthcheck.port")
+			}
+		}
 	}
 	return nil
 }

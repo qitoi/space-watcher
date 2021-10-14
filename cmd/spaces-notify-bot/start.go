@@ -18,6 +18,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -42,20 +44,27 @@ func (c *Command) Start() error {
 	dbClient, err := db.Open("./space-notify-bot.db")
 	defer dbClient.Close()
 
+	// twitter api v1.1 client
 	auth := oauth1.NewAuth(c.Config.Twitter.ConsumerKey, c.Config.Twitter.ConsumerSecret)
 	httpClient := auth.GetHttpClient(context.Background(), c.Config.Twitter.AccessToken, c.Config.Twitter.AccessSecret)
 	clientV11 := twitter11.NewClient(httpClient)
 
+	// twitter api v2 client
 	clientV2 := twitter2.NewClient(c.Config.Twitter.BearerToken)
 
+	// monitoring target = followings
 	ids, err := c.getFollowings(clientV11, c.Config.Twitter.UserID)
 	if err != nil {
 		return err
 	}
-
 	creatorIDs := make([]string, len(ids))
 	for i, id := range ids {
 		creatorIDs[i] = strconv.FormatInt(id, 10)
+	}
+
+	// start http server for health check
+	if c.Config.HealthCheck != nil && *c.Config.HealthCheck.Enabled {
+		StartHealthCheckServer(*c.Config.HealthCheck.Port)
 	}
 
 	interval := time.Duration(c.Config.Bot.SearchInterval) * time.Second
@@ -177,4 +186,12 @@ func (c *Command) tweetSpace(clientV11 *twitter11.Client, space twitter2.Space, 
 	}
 	c.Logger.Infow("tweet completed", "message", message)
 	return tweet.ID, nil
+}
+
+func StartHealthCheckServer(port int) {
+	go func() {
+		http.ListenAndServe(fmt.Sprintf(":%d", port), http.HandlerFunc(func(res http.ResponseWriter, r *http.Request) {
+			res.WriteHeader(http.StatusOK)
+		}))
+	}()
 }
