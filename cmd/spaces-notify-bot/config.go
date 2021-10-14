@@ -38,14 +38,14 @@ type BotConfig struct {
 }
 
 type HealthCheckConfig struct {
-	Enabled *bool `yaml:"enabled"`
-	Port    *int  `yaml:"port"`
+	Enabled *bool `yaml:"enabled,omitempty"`
+	Port    *int  `yaml:"port,omitempty"`
 }
 
 type Config struct {
 	Twitter     TwitterConfig      `yaml:"twitter"`
 	Bot         BotConfig          `yaml:"bot"`
-	HealthCheck *HealthCheckConfig `yaml:"healthcheck"`
+	HealthCheck *HealthCheckConfig `yaml:"healthcheck,omitempty"`
 }
 
 func SaveConfig(config Config) error {
