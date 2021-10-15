@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"sync"
@@ -67,8 +68,12 @@ func (c *Command) Start() error {
 		StartHealthCheckServer(*c.Config.HealthCheck.Port)
 	}
 
-	baseInterval := time.Duration(c.Config.Bot.SearchInterval) * time.Second
-	for {
+	// interval [s]
+	baseInterval := c.Config.Bot.SearchInterval
+	interval := baseInterval
+
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	for range ticker.C {
 		spaces, users, rate, err := c.searchSpaces(ctx, clientV2, creatorIDs)
 		if err != nil {
 			c.Logger.Errorw("search spaces error", "error", err)
@@ -82,16 +87,27 @@ func (c *Command) Start() error {
 			}
 		}
 
-		interval := baseInterval
 		if rate != nil {
-			intervalForReset := time.Duration((rate.Reset.Sub(time.Now()).Milliseconds()/1000)/int64(rate.Remaining+1)) * time.Second
-			if interval < intervalForReset {
-				interval = intervalForReset
+			resetTime := rate.Reset.Sub(time.Now()).Seconds()
+			intervalForReset := int64(math.Ceil(resetTime / float64(rate.Remaining+1)))
+			nextInterval := interval
+
+			if intervalForReset != interval {
+				nextInterval = intervalForReset
+			}
+
+			if nextInterval < baseInterval {
+				nextInterval = baseInterval
+			}
+
+			if nextInterval != interval {
+				interval = nextInterval
+				ticker.Reset(time.Duration(interval) * time.Second)
 			}
 		}
-
-		time.Sleep(interval)
 	}
+
+	return nil
 }
 
 func (c *Command) getFollowings(clientV11 *twitter11.Client, userID int64) ([]int64, error) {
