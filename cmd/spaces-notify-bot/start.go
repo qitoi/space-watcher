@@ -67,22 +67,27 @@ func (c *Command) Start() error {
 		StartHealthCheckServer(*c.Config.HealthCheck.Port)
 	}
 
-	interval := time.Duration(c.Config.Bot.SearchInterval) * time.Second
+	baseInterval := time.Duration(c.Config.Bot.SearchInterval) * time.Second
 	for {
 		spaces, users, rate, err := c.searchSpaces(ctx, clientV2, creatorIDs)
-		c.Logger.Infow("search spaces", "spaces", spaces, "users", users, "rate", rate)
 		if err != nil {
-			return err
+			c.Logger.Errorw("search spaces error", "error", err)
+		}
+		c.Logger.Infow("search spaces result", "spaces", spaces, "users", users, "rate", rate)
+
+		if spaces != nil && users != nil {
+			err = c.notify(dbClient, clientV11, spaces, users)
+			if err != nil {
+				c.Logger.Errorw("notify space error", "error", err)
+			}
 		}
 
-		err = c.notify(dbClient, clientV11, spaces, users)
-		if err != nil {
-			return err
-		}
-
-		intervalForReset := time.Duration((rate.Reset.Sub(time.Now()).Milliseconds()/1000)/int64(rate.Remaining+1)) * time.Second
-		if interval < intervalForReset {
-			interval = intervalForReset
+		interval := baseInterval
+		if rate != nil {
+			intervalForReset := time.Duration((rate.Reset.Sub(time.Now()).Milliseconds()/1000)/int64(rate.Remaining+1)) * time.Second
+			if interval < intervalForReset {
+				interval = intervalForReset
+			}
 		}
 
 		time.Sleep(interval)

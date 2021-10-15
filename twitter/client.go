@@ -19,7 +19,6 @@ package twitter
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -39,6 +38,21 @@ type RateLimit struct {
 	Limit     int       `json:"limit"`
 	Remaining int       `json:"remaining"`
 	Reset     time.Time `json:"reset"`
+}
+
+type Errors []struct {
+	Message string `json:"message"`
+	Code    int    `json:"code"`
+}
+
+type APIError struct {
+	Errors     Errors
+	StatusCode int
+	Status     string
+}
+
+func (e *APIError) Error() string {
+	return e.Status
 }
 
 func NewClient(bearer string) *Client {
@@ -116,11 +130,52 @@ func (c *Client) execRequest(req *http.Request, out interface{}) (*RateLimit, er
 		rate.Reset = time.Unix(int64(rn), 0)
 	}
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("status error: %v", resp.StatusCode)
+	err = parseResponse(resp, out)
+	if err != nil {
+		if apiErr, ok := err.(*APIError); ok {
+			if apiErr.StatusCode/100 == 5 {
+				return nil, apiErr
+			}
+		}
 	}
 
-	return rate, json.NewDecoder(resp.Body).Decode(out)
+	return rate, err
+}
+
+func parseResponse(resp *http.Response, out interface{}) error {
+	var m map[string]json.RawMessage
+
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		return err
+	}
+
+	var errors Errors
+	if raw, ok := m["errors"]; ok {
+		if err := json.Unmarshal(raw, &errors); err != nil {
+			return err
+		}
+		delete(m, "errors")
+	}
+
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	if err := json.Unmarshal(b, out); err != nil {
+		return err
+	}
+
+	status := resp.StatusCode / 100
+	if len(errors) > 0 || status == 4 || status == 5 {
+		return &APIError{
+			Errors:     errors,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+		}
+	}
+
+	return nil
 }
 
 func setRequestParam(m map[string]string, key string, values []string) {
