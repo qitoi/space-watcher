@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func fail(logger *zap.SugaredLogger, err error) {
@@ -42,15 +43,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	logger, err := zap.NewProduction()
-	if err != nil {
-		panic(err)
-	}
+	logger := buildLogger()
 	defer logger.Sync()
+
+	sugared := logger.Sugar()
 
 	config, err := LoadConfig()
 	if err != nil {
-		panic(err)
+		sugared.Errorw("load config error", "error", err)
+		os.Exit(1)
 	}
 	if err := CheckMinimalValidConfig(*config); err != nil {
 		panic(err)
@@ -58,18 +59,40 @@ func main() {
 
 	c := Command{
 		Config: config,
-		Logger: logger.Sugar(),
+		Logger: sugared,
 	}
 
 	if init {
 		if err := c.InitializeToken(); err != nil {
-			fail(c.Logger, err)
+			sugared.Errorw("initialize error", "error", err)
+			os.Exit(1)
 		}
 		os.Exit(0)
 	}
 
 	if err := c.Start(); err != nil {
+		sugared.Errorw("error", "error", err)
 		fail(c.Logger, err)
 	}
 	os.Exit(0)
+}
+
+func buildLogger() *zap.Logger {
+	highPriority := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
+		return level >= zapcore.WarnLevel
+	})
+	lowPriority := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
+		return level < zapcore.WarnLevel
+	})
+
+	encoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+	stdoutSyncer := zapcore.Lock(os.Stdout)
+	stderrSyncer := zapcore.Lock(os.Stderr)
+
+	core := zapcore.NewTee(
+		zapcore.NewCore(encoder, stderrSyncer, highPriority),
+		zapcore.NewCore(encoder, stdoutSyncer, lowPriority),
+	)
+
+	return zap.New(core)
 }
