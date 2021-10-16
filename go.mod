@@ -1,4 +1,4 @@
-module github.com/qitoi/spaces-notify-bot
+module github.com/qitoi/space-watcher
 
 go 1.17
 

@@ -1,2 +1,2 @@
-# spaces-notify-bot
+# space-watcher
 

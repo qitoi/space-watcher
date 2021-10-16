@@ -22,7 +22,7 @@ import (
 
 	"github.com/kylemcc/twitter-text-go/extract"
 
-	twitter2 "github.com/qitoi/spaces-notify-bot/twitter"
+	twitter2 "github.com/qitoi/space-watcher/twitter"
 )
 
 func EscapeMessage(message string) string {

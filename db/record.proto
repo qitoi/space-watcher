@@ -1,6 +1,6 @@
 syntax = "proto3";
 package db;
-option go_package = "github.com/qitoi/spaces-notify-bot/db";
+option go_package = "github.com/qitoi/space-watcher/db";
 
 import "google/protobuf/timestamp.proto";
 

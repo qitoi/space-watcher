@@ -19,7 +19,7 @@ package bot
 import (
 	"testing"
 
-	twitter2 "github.com/qitoi/spaces-notify-bot/twitter"
+	twitter2 "github.com/qitoi/space-watcher/twitter"
 )
 
 func TestEscapeMessage(t *testing.T) {

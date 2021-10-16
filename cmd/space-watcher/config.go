@@ -33,8 +33,8 @@ type TwitterConfig struct {
 }
 
 type BotConfig struct {
-	SearchInterval int64  `yaml:"search_interval"`
-	Message        string `yaml:"message"`
+	WatchInterval int64  `yaml:"watch_interval"`
+	Message       string `yaml:"message"`
 }
 
 type HealthCheckConfig struct {
@@ -106,8 +106,8 @@ func CheckValidConfig(config Config) error {
 	if config.Twitter.UserID == 0 {
 		return errors.New("invalid config: twitter.user_id")
 	}
-	if config.Bot.SearchInterval == 0 {
-		return errors.New("invalid config: bot.search_interval")
+	if config.Bot.WatchInterval == 0 {
+		return errors.New("invalid config: bot.watch_interval")
 	}
 	if config.Bot.Message == "" {
 		return errors.New("invalid config: bot.message")

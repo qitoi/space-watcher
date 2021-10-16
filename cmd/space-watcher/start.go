@@ -28,10 +28,10 @@ import (
 	twitter11 "github.com/dghubble/go-twitter/twitter"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/qitoi/spaces-notify-bot/bot"
-	"github.com/qitoi/spaces-notify-bot/db"
-	"github.com/qitoi/spaces-notify-bot/oauth1"
-	twitter2 "github.com/qitoi/spaces-notify-bot/twitter"
+	"github.com/qitoi/space-watcher/bot"
+	"github.com/qitoi/space-watcher/db"
+	"github.com/qitoi/space-watcher/oauth1"
+	twitter2 "github.com/qitoi/space-watcher/twitter"
 )
 
 func (c *Command) Start() error {
@@ -42,7 +42,7 @@ func (c *Command) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	dbClient, err := db.Open("./space-notify-bot.db")
+	dbClient, err := db.Open("./space-watcher.db")
 	defer dbClient.Close()
 
 	// twitter api v1.1 client
@@ -69,16 +69,16 @@ func (c *Command) Start() error {
 	}
 
 	// interval [s]
-	baseInterval := c.Config.Bot.SearchInterval
+	baseInterval := c.Config.Bot.WatchInterval
 	interval := baseInterval
 
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	for range ticker.C {
-		spaces, users, rate, err := c.searchSpaces(ctx, clientV2, creatorIDs)
+		spaces, users, rate, err := c.watchSpaces(ctx, clientV2, creatorIDs)
 		if err != nil {
-			c.Logger.Errorw("search spaces error", "error", err)
+			c.Logger.Errorw("watch spaces error", "error", err)
 		}
-		c.Logger.Infow("search spaces result", "spaces", spaces, "users", users, "rate", rate)
+		c.Logger.Infow("watch spaces result", "spaces", spaces, "users", users, "rate", rate)
 
 		if spaces != nil && users != nil {
 			err = c.notify(dbClient, clientV11, spaces, users)
@@ -121,7 +121,7 @@ func (c *Command) getFollowings(clientV11 *twitter11.Client, userID int64) ([]in
 	return friendsResp.IDs, nil
 }
 
-func (c *Command) searchSpaces(ctx context.Context, clientV2 *twitter2.Client, creatorIDs []string) ([]twitter2.Space, map[string]twitter2.User, *twitter2.RateLimit, error) {
+func (c *Command) watchSpaces(ctx context.Context, clientV2 *twitter2.Client, creatorIDs []string) ([]twitter2.Space, map[string]twitter2.User, *twitter2.RateLimit, error) {
 	resp, rate, err := clientV2.GetSpacesByCreatorIDs(
 		ctx,
 		twitter2.SpacesByCreatorIDsRequest{

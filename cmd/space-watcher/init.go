@@ -24,8 +24,8 @@ import (
 
 	twitter11 "github.com/dghubble/go-twitter/twitter"
 
-	"github.com/qitoi/spaces-notify-bot/oauth1"
-	twitter2 "github.com/qitoi/spaces-notify-bot/twitter"
+	"github.com/qitoi/space-watcher/oauth1"
+	twitter2 "github.com/qitoi/space-watcher/twitter"
 )
 
 func (c *Command) InitializeToken() error {
