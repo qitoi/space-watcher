@@ -6,6 +6,6 @@ bot:
     message: |
         {{.User.Name | escape}} さんがスペースを開始しました
         {{.URL}}
-healthcheck:
+healthcheck_server:
     enabled: false
     port: 18080

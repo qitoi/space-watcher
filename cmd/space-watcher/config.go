@@ -45,7 +45,7 @@ type HealthCheckConfig struct {
 type Config struct {
 	Twitter     TwitterConfig      `yaml:"twitter"`
 	Bot         BotConfig          `yaml:"bot"`
-	HealthCheck *HealthCheckConfig `yaml:"healthcheck,omitempty"`
+	HealthCheck *HealthCheckConfig `yaml:"healthcheck_server,omitempty"`
 }
 
 func SaveConfig(config Config) error {
