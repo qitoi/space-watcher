@@ -63,9 +63,11 @@ func (c *Command) Start() error {
 		creatorIDs[i] = strconv.FormatInt(id, 10)
 	}
 
+	c.Logger.Infow("target users", "users", creatorIDs)
+
 	// start http server for health check
 	if c.Config.HealthCheck != nil && *c.Config.HealthCheck.Enabled {
-		StartHealthCheckServer(*c.Config.HealthCheck.Port)
+		c.StartHealthCheckServer(*c.Config.HealthCheck.Port)
 	}
 
 	// interval [s]
@@ -209,10 +211,16 @@ func (c *Command) tweetSpace(clientV11 *twitter11.Client, space twitter2.Space, 
 	return tweet.ID, nil
 }
 
-func StartHealthCheckServer(port int) {
+func (c *Command) StartHealthCheckServer(port int) {
 	go func() {
-		http.ListenAndServe(fmt.Sprintf(":%d", port), http.HandlerFunc(func(res http.ResponseWriter, r *http.Request) {
+		address := fmt.Sprintf(":%d", port)
+		c.Logger.Infow("start http server for health check", "address", address)
+		err := http.ListenAndServe(address, http.HandlerFunc(func(res http.ResponseWriter, r *http.Request) {
+			c.Logger.Infow("health check access", "uri", r.RequestURI, "remote_addr", r.RemoteAddr)
 			res.WriteHeader(http.StatusOK)
 		}))
+		if err != nil {
+			c.Logger.Infow("http server for health check failed", "address", address, "error", err)
+		}
 	}()
 }
