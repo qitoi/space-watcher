@@ -33,19 +33,35 @@ type TwitterConfig struct {
 }
 
 type BotConfig struct {
-	WatchInterval int64  `yaml:"watch_interval"`
-	Message       string `yaml:"message"`
+	WatchInterval int64              `yaml:"watch_interval"`
+	Notification  NotificationConfig `yaml:"notification"`
+}
+
+type NotificationConfig struct {
+	Schedule struct {
+		Enabled bool    `yaml:"enabled"`
+		Message *string `yaml:"message,omitempty"`
+	} `yaml:"schedule"`
+	ScheduleRemind struct {
+		Enabled bool    `yaml:"enabled"`
+		Before  *int64  `yaml:"before,omitempty"`
+		Message *string `yaml:"message,omitempty"`
+	} `yaml:"schedule_remind"`
+	Start struct {
+		Enabled bool    `yaml:"enabled"`
+		Message *string `yaml:"message,omitempty"`
+	} `yaml:"start"`
 }
 
 type HealthCheckConfig struct {
-	Enabled *bool `yaml:"enabled,omitempty"`
-	Port    *int  `yaml:"port,omitempty"`
+	Enabled bool `yaml:"enabled"`
+	Port    *int `yaml:"port,omitempty"`
 }
 
 type Config struct {
-	Twitter     TwitterConfig      `yaml:"twitter"`
-	Bot         BotConfig          `yaml:"bot"`
-	HealthCheck *HealthCheckConfig `yaml:"healthcheck_server,omitempty"`
+	Twitter     TwitterConfig     `yaml:"twitter"`
+	Bot         BotConfig         `yaml:"bot"`
+	HealthCheck HealthCheckConfig `yaml:"healthcheck_server"`
 }
 
 func SaveConfig(config Config) error {
@@ -109,23 +125,46 @@ func CheckValidConfig(config Config) error {
 	if config.Bot.WatchInterval == 0 {
 		return errors.New("invalid config: bot.watch_interval")
 	}
-	if config.Bot.Message == "" {
-		return errors.New("invalid config: bot.message")
+
+	notif := &config.Bot.Notification
+
+	// Schedule
+	if notif.Schedule.Enabled && notif.Schedule.Message == nil {
+		return errors.New("config not found: bot.notification.schedule.message")
 	}
-	if config.HealthCheck != nil {
-		if config.HealthCheck.Enabled == nil {
-			return errors.New("config not found: healthcheck.enabled")
-		}
-		if *config.HealthCheck.Enabled {
-			if config.HealthCheck.Port == nil {
-				return errors.New("config not found: healthcheck.port")
-			}
-		}
-		if config.HealthCheck.Port != nil {
-			if *config.HealthCheck.Port <= 0 || *config.HealthCheck.Port > 65535 {
-				return errors.New("invalid config: healthcheck.port")
-			}
-		}
+	if notif.Schedule.Message != nil && *notif.Schedule.Message == "" {
+		return errors.New("invalid config: bot.notification.schedule.message")
 	}
+
+	// ScheduleRemind
+	if notif.ScheduleRemind.Enabled && notif.ScheduleRemind.Before == nil {
+		return errors.New("config not found: bot.notification.schedule_remind.before")
+	}
+	if notif.ScheduleRemind.Before != nil && *notif.ScheduleRemind.Before <= 0 {
+		return errors.New("invalid config: bot.notification.schedule_remind.before")
+	}
+	if notif.ScheduleRemind.Enabled && notif.ScheduleRemind.Message == nil {
+		return errors.New("config not found: bot.notification.schedule_remind.message")
+	}
+	if notif.ScheduleRemind.Message != nil && *notif.ScheduleRemind.Message == "" {
+		return errors.New("invalid config: bot.notification.schedule_remind.message")
+	}
+
+	// Start
+	if notif.Start.Enabled && notif.Start.Message == nil {
+		return errors.New("config not found: bot.notification.start.message")
+	}
+	if notif.Start.Message != nil && *notif.Start.Message == "" {
+		return errors.New("invalid config: bot.notification.start.message")
+	}
+
+	// HealthCheck
+	if config.HealthCheck.Enabled && config.HealthCheck.Port == nil {
+		return errors.New("config not found: healthcheck.port")
+	}
+	if config.HealthCheck.Port != nil && (*config.HealthCheck.Port <= 0 || *config.HealthCheck.Port > 65535) {
+		return errors.New("invalid config: healthcheck.port")
+	}
+
 	return nil
 }

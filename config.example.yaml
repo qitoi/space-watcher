@@ -3,9 +3,23 @@ twitter:
     consumer_secret: YOUR_CONSUMER_SECRET
 bot:
     watch_interval: 5
-    message: |
-        {{.User.Name | escape}} さんがスペースを開始しました
-        {{.URL}}
+    notification:
+        schedule:
+            enabled: true
+            message: |
+                {{.User.Name | escape}} さんが {{.Space.ScheduledStart.Local.Format "2006/01/02 15:04 MST"}} にスペースをスケジュールしました
+                {{.URL}}
+        schedule_remind:
+            enabled: false
+            before: 1800
+            message: |
+                {{.User.Name | escape}} さんのスペースが {{.Space.ScheduledStart.Local.Format "2006/01/02 15:04 MST"}} にスケジュールされています
+                {{.URL}}
+        start:
+            enabled: true
+            message: |
+                {{.User.Name | escape}} さんがスペースを開始しました
+                {{.URL}}
 healthcheck_server:
     enabled: false
     port: 18080

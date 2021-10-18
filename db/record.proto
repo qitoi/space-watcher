@@ -4,12 +4,20 @@ option go_package = "github.com/qitoi/space-watcher/db";
 
 import "google/protobuf/timestamp.proto";
 
+enum SpaceNotificationStatus {
+  NONE = 0;
+  SCHEDULE = 1;
+  SCHEDULE_REMIND = 2;
+  START = 3;
+}
+
 message Space {
   string id = 1;
   string creator_id = 2;
   string screen_name = 3;
   string title = 4;
-  int64 notify_tweet_id = 5;
-  google.protobuf.Timestamp started_at = 6;
-  google.protobuf.Timestamp created_at = 7;
+  SpaceNotificationStatus notification_status = 6;
+  google.protobuf.Timestamp scheduled_start = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp created_at = 9;
 }

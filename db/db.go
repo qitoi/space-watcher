@@ -18,13 +18,11 @@ package db
 
 import (
 	"errors"
+	"time"
 
 	bolt "go.etcd.io/bbolt"
 	"google.golang.org/protobuf/proto"
-)
-
-var (
-	ErrKeyNotFound = errors.New("key not found")
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -58,20 +56,82 @@ func (c *Client) Close() error {
 	return c.db.Close()
 }
 
-func (c *Client) CheckNotified(spaceID string) bool {
+func (c *Client) GetNotifiedStatus(spaceID string) (SpaceNotificationStatus, error) {
 	key := spaceID
+	var status SpaceNotificationStatus
 	err := c.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketSpace))
-		data := b.Get([]byte(key))
-		if data == nil {
-			return ErrKeyNotFound
+		if b == nil {
+			return errors.New("bucket not found: " + bucketSpace)
 		}
+
+		data := b.Get([]byte(key))
+
+		if data == nil {
+			status = SpaceNotificationStatus_NONE
+			return nil
+		}
+
+		var s Space
+		err := proto.Unmarshal(data, &s)
+		if err != nil {
+			return err
+		}
+
+		status = s.NotificationStatus
 		return nil
 	})
-	return err != ErrKeyNotFound
+	return status, err
 }
 
-func (c *Client) RegisterNotified(record *Space) error {
+func (c *Client) CheckNotified(spaceID string, status SpaceNotificationStatus) (bool, error) {
+	prevStatus, err := c.GetNotifiedStatus(spaceID)
+	if err != nil {
+		return false, err
+	}
+	return status <= prevStatus, nil
+}
+
+func (c *Client) RegisterSchedule(spaceID, creatorID, screenName, title string, scheduledStart, createdAt time.Time) error {
+	return c.register(&Space{
+		Id:                 spaceID,
+		CreatorId:          creatorID,
+		ScreenName:         screenName,
+		Title:              title,
+		NotificationStatus: SpaceNotificationStatus_SCHEDULE,
+		ScheduledStart:     timestamppb.New(scheduledStart),
+		StartedAt:          nil,
+		CreatedAt:          timestamppb.New(createdAt),
+	})
+}
+
+func (c *Client) RegisterScheduleRemind(spaceID, creatorID, screenName, title string, scheduledStart, createdAt time.Time) error {
+	return c.register(&Space{
+		Id:                 spaceID,
+		CreatorId:          creatorID,
+		ScreenName:         screenName,
+		Title:              title,
+		NotificationStatus: SpaceNotificationStatus_SCHEDULE_REMIND,
+		ScheduledStart:     timestamppb.New(scheduledStart),
+		StartedAt:          nil,
+		CreatedAt:          timestamppb.New(createdAt),
+	})
+}
+
+func (c *Client) RegisterStart(spaceID, creatorID, screenName, title string, startedAt, createdAt time.Time) error {
+	return c.register(&Space{
+		Id:                 spaceID,
+		CreatorId:          creatorID,
+		ScreenName:         screenName,
+		Title:              title,
+		NotificationStatus: SpaceNotificationStatus_START,
+		ScheduledStart:     nil,
+		StartedAt:          timestamppb.New(startedAt),
+		CreatedAt:          timestamppb.New(createdAt),
+	})
+}
+
+func (c *Client) register(record *Space) error {
 	data, err := proto.Marshal(record)
 	if err != nil {
 		return err

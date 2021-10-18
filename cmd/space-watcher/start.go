@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -26,7 +27,6 @@ import (
 	"time"
 
 	twitter11 "github.com/dghubble/go-twitter/twitter"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/qitoi/space-watcher/bot"
 	"github.com/qitoi/space-watcher/db"
@@ -66,7 +66,7 @@ func (c *Command) Start() error {
 	c.Logger.Infow("target users", "users", creatorIDs)
 
 	// start http server for health check
-	if c.Config.HealthCheck != nil && *c.Config.HealthCheck.Enabled {
+	if c.Config.HealthCheck.Enabled {
 		c.StartHealthCheckServer(*c.Config.HealthCheck.Port)
 	}
 
@@ -83,7 +83,7 @@ func (c *Command) Start() error {
 		c.Logger.Infow("watch spaces result", "spaces", spaces, "users", users, "rate", rate)
 
 		if spaces != nil && users != nil {
-			err = c.notify(dbClient, clientV11, spaces, users)
+			err = c.processSpaces(dbClient, clientV11, spaces, users)
 			if err != nil {
 				c.Logger.Errorw("notify space error", "error", err)
 			}
@@ -129,7 +129,7 @@ func (c *Command) watchSpaces(ctx context.Context, clientV2 *twitter2.Client, cr
 		twitter2.SpacesByCreatorIDsRequest{
 			UserIDs:     creatorIDs,
 			Expansions:  []string{"creator_id"},
-			SpaceFields: []string{"id", "title", "creator_id", "started_at", "created_at"},
+			SpaceFields: []string{"id", "title", "creator_id", "state", "started_at", "scheduled_start", "created_at", "updated_at"},
 			UserFields:  []string{"id", "name", "username"},
 		})
 	if err != nil {
@@ -151,7 +151,7 @@ func (c *Command) watchSpaces(ctx context.Context, clientV2 *twitter2.Client, cr
 	return spaces, users, rate, nil
 }
 
-func (c *Command) notify(dbClient *db.Client, clientV11 *twitter11.Client, spaces []twitter2.Space, users map[string]twitter2.User) error {
+func (c *Command) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client, spaces []twitter2.Space, users map[string]twitter2.User) error {
 	ch := make(chan error)
 	var wg sync.WaitGroup
 
@@ -161,24 +161,7 @@ func (c *Command) notify(dbClient *db.Client, clientV11 *twitter11.Client, space
 		u := users[s.CreatorID]
 		go func() {
 			defer wg.Done()
-			if !dbClient.CheckNotified(s.ID) {
-				c.Logger.Infow("notify", "space", s, "user", u)
-
-				tweetID, err := c.tweetSpace(clientV11, s, u)
-				if err != nil {
-					ch <- err
-					return
-				}
-				ch <- dbClient.RegisterNotified(&db.Space{
-					Id:            s.ID,
-					CreatorId:     u.ID,
-					ScreenName:    u.Username,
-					Title:         s.Title,
-					NotifyTweetId: tweetID,
-					StartedAt:     timestamppb.New(*s.StartedAt),
-					CreatedAt:     timestamppb.New(*s.CreatedAt),
-				})
-			}
+			ch <- c.notifySpace(dbClient, clientV11, &s, &u)
 		}()
 	}
 
@@ -198,8 +181,87 @@ func (c *Command) notify(dbClient *db.Client, clientV11 *twitter11.Client, space
 	return err
 }
 
-func (c *Command) tweetSpace(clientV11 *twitter11.Client, space twitter2.Space, user twitter2.User) (int64, error) {
-	message, err := bot.GetTweetMessage(c.Config.Bot.Message, space, user)
+func (c *Command) notifySpace(dbClient *db.Client, clientV11 *twitter11.Client, space *twitter2.Space, user *twitter2.User) error {
+	currentStatus, err := c.getNotificationStatus(space)
+	if err != nil {
+		return err
+	}
+
+	if notified, err := dbClient.CheckNotified(space.ID, currentStatus); err != nil {
+		return err
+	} else if notified {
+		return nil
+	}
+
+	c.Logger.Infow("notify", "space", *space, "user", *user, "status", currentStatus)
+
+	_, err = c.tweetSpace(clientV11, currentStatus, space, user)
+	if err != nil {
+		return err
+	}
+
+	switch currentStatus {
+	case db.SpaceNotificationStatus_SCHEDULE:
+		return dbClient.RegisterSchedule(space.ID, user.ID, user.Username, space.Title, *space.ScheduledStart, *space.CreatedAt)
+	case db.SpaceNotificationStatus_SCHEDULE_REMIND:
+		return dbClient.RegisterScheduleRemind(space.ID, user.ID, user.Username, space.Title, *space.ScheduledStart, *space.CreatedAt)
+	case db.SpaceNotificationStatus_START:
+		return dbClient.RegisterStart(space.ID, user.ID, user.Username, space.Title, *space.StartedAt, *space.CreatedAt)
+	}
+
+	return nil
+}
+
+func (c *Command) getNotificationStatus(space *twitter2.Space) (db.SpaceNotificationStatus, error) {
+	if space.State == nil {
+		return db.SpaceNotificationStatus_NONE, errors.New("invalid space info")
+	}
+	switch *space.State {
+	case "scheduled":
+		if space.ScheduledStart == nil {
+			return db.SpaceNotificationStatus_NONE, errors.New("invalid space info")
+		}
+
+		// リマインド通知が有効で、リマインド時間を過ぎていればリマインド
+		start := *space.ScheduledStart
+		if c.Config.Bot.Notification.ScheduleRemind.Enabled {
+			reminderTime := start.Add(-time.Duration(*c.Config.Bot.Notification.ScheduleRemind.Before) * time.Second)
+			if time.Now().After(reminderTime) {
+				return db.SpaceNotificationStatus_SCHEDULE_REMIND, nil
+			}
+		}
+
+		// スケジュール作成通知が有効
+		if c.Config.Bot.Notification.Schedule.Enabled {
+			return db.SpaceNotificationStatus_SCHEDULE, nil
+		}
+
+		break
+	case "live":
+		// 開始済み
+		return db.SpaceNotificationStatus_START, nil
+	}
+
+	return db.SpaceNotificationStatus_NONE, nil
+}
+
+func (c *Command) tweetSpace(clientV11 *twitter11.Client, status db.SpaceNotificationStatus, space *twitter2.Space, user *twitter2.User) (int64, error) {
+	var template string
+	switch status {
+	case db.SpaceNotificationStatus_SCHEDULE:
+		template = *c.Config.Bot.Notification.Schedule.Message
+		break
+	case db.SpaceNotificationStatus_SCHEDULE_REMIND:
+		template = *c.Config.Bot.Notification.ScheduleRemind.Message
+		break
+	case db.SpaceNotificationStatus_START:
+		template = *c.Config.Bot.Notification.Start.Message
+		break
+	default:
+		return 0, errors.New("invalid notification status")
+	}
+
+	message, err := bot.GetTweetMessage(template, space, user)
 	if err != nil {
 		return 0, err
 	}

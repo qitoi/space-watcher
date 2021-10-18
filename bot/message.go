@@ -44,7 +44,7 @@ loop:
 	return strings.NewReplacer(reps...).Replace(message)
 }
 
-func GetTweetMessage(message string, space twitter2.Space, user twitter2.User) (string, error) {
+func GetTweetMessage(message string, space *twitter2.Space, user *twitter2.User) (string, error) {
 	url := twitter2.GetSpaceURL(space.ID)
 
 	t, err := template.New("message").
@@ -63,8 +63,8 @@ func GetTweetMessage(message string, space twitter2.Space, user twitter2.User) (
 		Space twitter2.Space
 		URL   string
 	}{
-		Space: space,
-		User:  user,
+		Space: *space,
+		User:  *user,
 		URL:   url,
 	})
 	if err != nil {
