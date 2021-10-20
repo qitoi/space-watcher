@@ -332,11 +332,11 @@ func (w *watcher) startHealthCheckServer(port int) {
 		address := fmt.Sprintf(":%d", port)
 		w.logger.Infow("start http server for health check", "address", address)
 		err := http.ListenAndServe(address, http.HandlerFunc(func(res http.ResponseWriter, r *http.Request) {
-			w.logger.Infow("health check access", "uri", r.RequestURI, "remote_addr", r.RemoteAddr)
+			w.logger.Debugw("health check access", "uri", r.RequestURI, "remote_addr", r.RemoteAddr)
 			res.WriteHeader(http.StatusOK)
 		}))
 		if err != nil {
-			w.logger.Infow("http server for health check failed", "address", address, "error", err)
+			w.logger.Errorw("http server for health check failed", "address", address, "error", err)
 		}
 	}()
 }
