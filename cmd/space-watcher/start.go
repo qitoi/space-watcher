@@ -38,8 +38,11 @@ import (
 )
 
 type watcher struct {
-	config *Config
-	logger *zap.SugaredLogger
+	config    *Config
+	logger    *zap.SugaredLogger
+	clientV11 *twitter11.Client
+	clientV2  *twitter2.Client
+	dbClient  *db.Client
 }
 
 func Start(config *Config) error {
@@ -53,11 +56,6 @@ func Start(config *Config) error {
 		return err
 	}
 	defer log.Sync()
-
-	w := &watcher{
-		config: config,
-		logger: log.Sugar(),
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -76,8 +74,16 @@ func Start(config *Config) error {
 	// twitter api v2 client
 	clientV2 := twitter2.NewClient(config.Twitter.BearerToken)
 
+	w := &watcher{
+		config:    config,
+		logger:    log.Sugar(),
+		clientV11: clientV11,
+		clientV2:  clientV2,
+		dbClient:  dbClient,
+	}
+
 	// monitoring target = followings
-	ids, err := w.getFollowings(clientV11, config.Twitter.UserID)
+	ids, err := w.getFollowings(config.Twitter.UserID)
 	if err != nil {
 		return err
 	}
@@ -93,44 +99,7 @@ func Start(config *Config) error {
 		w.startHealthCheckServer(*w.config.HealthCheck.Port)
 	}
 
-	// interval [s]
-	baseInterval := config.Bot.WatchInterval
-	interval := baseInterval
-
-	ticker := time.NewTicker(time.Duration(interval) * time.Second)
-	for range ticker.C {
-		spaces, users, rate, err := w.watchSpaces(ctx, clientV2, creatorIDs)
-		if err != nil {
-			w.logger.Errorw("watch spaces error", "error", err)
-		}
-		w.logger.Infow("watch spaces result", "spaces", spaces, "users", users, "rate", rate)
-
-		if spaces != nil && users != nil {
-			err = w.processSpaces(dbClient, clientV11, spaces, users)
-			if err != nil {
-				w.logger.Errorw("notify space error", "error", err)
-			}
-		}
-
-		if rate != nil {
-			resetTime := rate.Reset.Sub(time.Now()).Seconds()
-			intervalForReset := int64(math.Ceil(resetTime / float64(rate.Remaining+1)))
-			nextInterval := interval
-
-			if intervalForReset != interval {
-				nextInterval = intervalForReset
-			}
-
-			if nextInterval < baseInterval {
-				nextInterval = baseInterval
-			}
-
-			if nextInterval != interval {
-				interval = nextInterval
-				ticker.Reset(time.Duration(interval) * time.Second)
-			}
-		}
-	}
+	w.startWatch(ctx, creatorIDs)
 
 	return nil
 }
@@ -156,8 +125,49 @@ func getLogger(config *Config) (*logger.Logger, error) {
 	return logger.New(infoLog, errorLog), nil
 }
 
-func (w *watcher) getFollowings(clientV11 *twitter11.Client, userID int64) ([]int64, error) {
-	friendsResp, _, err := clientV11.Friends.IDs(&twitter11.FriendIDParams{
+func (w *watcher) startWatch(ctx context.Context, creatorIDs []string) {
+	// interval [s]
+	baseInterval := w.config.Bot.WatchInterval
+	interval := baseInterval
+
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	for range ticker.C {
+		spaces, users, rate, err := w.getSpaces(ctx, creatorIDs)
+		if err != nil {
+			w.logger.Errorw("watch spaces error", "error", err)
+		}
+		w.logger.Infow("watch spaces result", "spaces", spaces, "users", users, "rate", rate)
+
+		if spaces != nil && users != nil {
+			err = w.processSpaces(spaces, users)
+			if err != nil {
+				w.logger.Errorw("notify space error", "error", err)
+			}
+		}
+
+		if rate != nil {
+			resetTime := rate.Reset.Sub(time.Now()).Seconds()
+			intervalForReset := int64(math.Ceil(resetTime / float64(rate.Remaining+1)))
+			nextInterval := interval
+
+			if intervalForReset != interval {
+				nextInterval = intervalForReset
+			}
+
+			if nextInterval < baseInterval {
+				nextInterval = baseInterval
+			}
+
+			if nextInterval != interval {
+				interval = nextInterval
+				ticker.Reset(time.Duration(interval) * time.Second)
+			}
+		}
+	}
+}
+
+func (w *watcher) getFollowings(userID int64) ([]int64, error) {
+	friendsResp, _, err := w.clientV11.Friends.IDs(&twitter11.FriendIDParams{
 		UserID: userID,
 	})
 	if err != nil {
@@ -167,8 +177,8 @@ func (w *watcher) getFollowings(clientV11 *twitter11.Client, userID int64) ([]in
 	return friendsResp.IDs, nil
 }
 
-func (w *watcher) watchSpaces(ctx context.Context, clientV2 *twitter2.Client, creatorIDs []string) ([]twitter2.Space, map[string]twitter2.User, *twitter2.RateLimit, error) {
-	resp, rate, err := clientV2.GetSpacesByCreatorIDs(
+func (w *watcher) getSpaces(ctx context.Context, creatorIDs []string) ([]twitter2.Space, map[string]twitter2.User, *twitter2.RateLimit, error) {
+	resp, rate, err := w.clientV2.GetSpacesByCreatorIDs(
 		ctx,
 		twitter2.SpacesByCreatorIDsRequest{
 			UserIDs:     creatorIDs,
@@ -195,7 +205,7 @@ func (w *watcher) watchSpaces(ctx context.Context, clientV2 *twitter2.Client, cr
 	return spaces, users, rate, nil
 }
 
-func (w *watcher) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client, spaces []twitter2.Space, users map[string]twitter2.User) error {
+func (w *watcher) processSpaces(spaces []twitter2.Space, users map[string]twitter2.User) error {
 	ch := make(chan error)
 	var wg sync.WaitGroup
 
@@ -205,7 +215,7 @@ func (w *watcher) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client
 		u := users[s.CreatorID]
 		go func() {
 			defer wg.Done()
-			ch <- w.notifySpace(dbClient, clientV11, &s, &u)
+			ch <- w.notifySpace(&s, &u)
 		}()
 	}
 
@@ -225,13 +235,13 @@ func (w *watcher) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client
 	return err
 }
 
-func (w *watcher) notifySpace(dbClient *db.Client, clientV11 *twitter11.Client, space *twitter2.Space, user *twitter2.User) error {
+func (w *watcher) notifySpace(space *twitter2.Space, user *twitter2.User) error {
 	currentStatus, err := w.getNotificationStatus(space)
 	if err != nil {
 		return err
 	}
 
-	if notified, err := dbClient.CheckNotified(space.ID, currentStatus); err != nil {
+	if notified, err := w.dbClient.CheckNotified(space.ID, currentStatus); err != nil {
 		return err
 	} else if notified {
 		return nil
@@ -239,18 +249,18 @@ func (w *watcher) notifySpace(dbClient *db.Client, clientV11 *twitter11.Client, 
 
 	w.logger.Infow("notify", "space", *space, "user", *user, "status", currentStatus)
 
-	_, err = w.tweetSpace(clientV11, currentStatus, space, user)
+	_, err = w.tweetSpace(currentStatus, space, user)
 	if err != nil {
 		return err
 	}
 
 	switch currentStatus {
 	case db.SpaceNotificationStatus_SCHEDULE:
-		return dbClient.RegisterSchedule(space.ID, user.ID, user.Username, space.Title, *space.ScheduledStart, *space.CreatedAt)
+		return w.dbClient.RegisterSchedule(space.ID, user.ID, user.Username, space.Title, *space.ScheduledStart, *space.CreatedAt)
 	case db.SpaceNotificationStatus_SCHEDULE_REMIND:
-		return dbClient.RegisterScheduleRemind(space.ID, user.ID, user.Username, space.Title, *space.ScheduledStart, *space.CreatedAt)
+		return w.dbClient.RegisterScheduleRemind(space.ID, user.ID, user.Username, space.Title, *space.ScheduledStart, *space.CreatedAt)
 	case db.SpaceNotificationStatus_START:
-		return dbClient.RegisterStart(space.ID, user.ID, user.Username, space.Title, *space.StartedAt, *space.CreatedAt)
+		return w.dbClient.RegisterStart(space.ID, user.ID, user.Username, space.Title, *space.StartedAt, *space.CreatedAt)
 	}
 
 	return nil
@@ -289,7 +299,7 @@ func (w *watcher) getNotificationStatus(space *twitter2.Space) (db.SpaceNotifica
 	return db.SpaceNotificationStatus_NONE, nil
 }
 
-func (w *watcher) tweetSpace(clientV11 *twitter11.Client, status db.SpaceNotificationStatus, space *twitter2.Space, user *twitter2.User) (int64, error) {
+func (w *watcher) tweetSpace(status db.SpaceNotificationStatus, space *twitter2.Space, user *twitter2.User) (int64, error) {
 	var template string
 	switch status {
 	case db.SpaceNotificationStatus_SCHEDULE:
@@ -309,7 +319,7 @@ func (w *watcher) tweetSpace(clientV11 *twitter11.Client, status db.SpaceNotific
 	if err != nil {
 		return 0, err
 	}
-	tweet, _, err := clientV11.Statuses.Update(message, nil)
+	tweet, _, err := w.clientV11.Statuses.Update(message, nil)
 	if err != nil {
 		return 0, err
 	}
