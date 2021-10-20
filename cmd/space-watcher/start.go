@@ -22,39 +22,62 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
 
 	twitter11 "github.com/dghubble/go-twitter/twitter"
+	"go.uber.org/zap"
 
 	"github.com/qitoi/space-watcher/bot"
 	"github.com/qitoi/space-watcher/db"
+	"github.com/qitoi/space-watcher/logger"
 	"github.com/qitoi/space-watcher/oauth1"
 	twitter2 "github.com/qitoi/space-watcher/twitter"
 )
 
-func (c *Command) Start() error {
-	if err := CheckValidConfig(*c.Config); err != nil {
+type watcher struct {
+	config *Config
+	logger *zap.SugaredLogger
+}
+
+func Start(config *Config) error {
+	var err error
+	if err := CheckValidConfig(config); err != nil {
 		return err
+	}
+
+	log, err := getLogger(config)
+	if err != nil {
+		return err
+	}
+	defer log.Sync()
+
+	w := &watcher{
+		config: config,
+		logger: log.Sugar(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// signal handler (usr1: reopen log file)
+	startSignalHandler(log)
+
 	dbClient, err := db.Open("./space-watcher.db")
 	defer dbClient.Close()
 
 	// twitter api v1.1 client
-	auth := oauth1.NewAuth(c.Config.Twitter.ConsumerKey, c.Config.Twitter.ConsumerSecret)
-	httpClient := auth.GetHttpClient(context.Background(), c.Config.Twitter.AccessToken, c.Config.Twitter.AccessSecret)
+	auth := oauth1.NewAuth(config.Twitter.ConsumerKey, config.Twitter.ConsumerSecret)
+	httpClient := auth.GetHttpClient(context.Background(), config.Twitter.AccessToken, config.Twitter.AccessSecret)
 	clientV11 := twitter11.NewClient(httpClient)
 
 	// twitter api v2 client
-	clientV2 := twitter2.NewClient(c.Config.Twitter.BearerToken)
+	clientV2 := twitter2.NewClient(config.Twitter.BearerToken)
 
 	// monitoring target = followings
-	ids, err := c.getFollowings(clientV11, c.Config.Twitter.UserID)
+	ids, err := w.getFollowings(clientV11, config.Twitter.UserID)
 	if err != nil {
 		return err
 	}
@@ -63,29 +86,29 @@ func (c *Command) Start() error {
 		creatorIDs[i] = strconv.FormatInt(id, 10)
 	}
 
-	c.Logger.Infow("target users", "users", creatorIDs)
+	w.logger.Infow("target users", "users", creatorIDs)
 
 	// start http server for health check
-	if c.Config.HealthCheck.Enabled {
-		c.StartHealthCheckServer(*c.Config.HealthCheck.Port)
+	if config.HealthCheck.Enabled {
+		w.startHealthCheckServer(*w.config.HealthCheck.Port)
 	}
 
 	// interval [s]
-	baseInterval := c.Config.Bot.WatchInterval
+	baseInterval := config.Bot.WatchInterval
 	interval := baseInterval
 
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	for range ticker.C {
-		spaces, users, rate, err := c.watchSpaces(ctx, clientV2, creatorIDs)
+		spaces, users, rate, err := w.watchSpaces(ctx, clientV2, creatorIDs)
 		if err != nil {
-			c.Logger.Errorw("watch spaces error", "error", err)
+			w.logger.Errorw("watch spaces error", "error", err)
 		}
-		c.Logger.Infow("watch spaces result", "spaces", spaces, "users", users, "rate", rate)
+		w.logger.Infow("watch spaces result", "spaces", spaces, "users", users, "rate", rate)
 
 		if spaces != nil && users != nil {
-			err = c.processSpaces(dbClient, clientV11, spaces, users)
+			err = w.processSpaces(dbClient, clientV11, spaces, users)
 			if err != nil {
-				c.Logger.Errorw("notify space error", "error", err)
+				w.logger.Errorw("notify space error", "error", err)
 			}
 		}
 
@@ -112,7 +135,28 @@ func (c *Command) Start() error {
 	return nil
 }
 
-func (c *Command) getFollowings(clientV11 *twitter11.Client, userID int64) ([]int64, error) {
+func getLogger(config *Config) (*logger.Logger, error) {
+	var err error
+	infoLog := logger.Wrap(os.Stdout)
+	if config.Logger != nil && config.Logger.Info != nil {
+		infoLog, err = logger.OpenFile(*config.Logger.Info, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	errorLog := logger.Wrap(os.Stderr)
+	if config.Logger != nil && config.Logger.Error != nil {
+		errorLog, err = logger.OpenFile(*config.Logger.Error, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return logger.New(infoLog, errorLog), nil
+}
+
+func (w *watcher) getFollowings(clientV11 *twitter11.Client, userID int64) ([]int64, error) {
 	friendsResp, _, err := clientV11.Friends.IDs(&twitter11.FriendIDParams{
 		UserID: userID,
 	})
@@ -123,7 +167,7 @@ func (c *Command) getFollowings(clientV11 *twitter11.Client, userID int64) ([]in
 	return friendsResp.IDs, nil
 }
 
-func (c *Command) watchSpaces(ctx context.Context, clientV2 *twitter2.Client, creatorIDs []string) ([]twitter2.Space, map[string]twitter2.User, *twitter2.RateLimit, error) {
+func (w *watcher) watchSpaces(ctx context.Context, clientV2 *twitter2.Client, creatorIDs []string) ([]twitter2.Space, map[string]twitter2.User, *twitter2.RateLimit, error) {
 	resp, rate, err := clientV2.GetSpacesByCreatorIDs(
 		ctx,
 		twitter2.SpacesByCreatorIDsRequest{
@@ -151,7 +195,7 @@ func (c *Command) watchSpaces(ctx context.Context, clientV2 *twitter2.Client, cr
 	return spaces, users, rate, nil
 }
 
-func (c *Command) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client, spaces []twitter2.Space, users map[string]twitter2.User) error {
+func (w *watcher) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client, spaces []twitter2.Space, users map[string]twitter2.User) error {
 	ch := make(chan error)
 	var wg sync.WaitGroup
 
@@ -161,7 +205,7 @@ func (c *Command) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client
 		u := users[s.CreatorID]
 		go func() {
 			defer wg.Done()
-			ch <- c.notifySpace(dbClient, clientV11, &s, &u)
+			ch <- w.notifySpace(dbClient, clientV11, &s, &u)
 		}()
 	}
 
@@ -173,7 +217,7 @@ func (c *Command) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client
 	var err error
 	for e := range ch {
 		if e != nil {
-			c.Logger.Errorw("notify error", "error", e)
+			w.logger.Errorw("notify error", "error", e)
 			err = e
 		}
 	}
@@ -181,8 +225,8 @@ func (c *Command) processSpaces(dbClient *db.Client, clientV11 *twitter11.Client
 	return err
 }
 
-func (c *Command) notifySpace(dbClient *db.Client, clientV11 *twitter11.Client, space *twitter2.Space, user *twitter2.User) error {
-	currentStatus, err := c.getNotificationStatus(space)
+func (w *watcher) notifySpace(dbClient *db.Client, clientV11 *twitter11.Client, space *twitter2.Space, user *twitter2.User) error {
+	currentStatus, err := w.getNotificationStatus(space)
 	if err != nil {
 		return err
 	}
@@ -193,9 +237,9 @@ func (c *Command) notifySpace(dbClient *db.Client, clientV11 *twitter11.Client, 
 		return nil
 	}
 
-	c.Logger.Infow("notify", "space", *space, "user", *user, "status", currentStatus)
+	w.logger.Infow("notify", "space", *space, "user", *user, "status", currentStatus)
 
-	_, err = c.tweetSpace(clientV11, currentStatus, space, user)
+	_, err = w.tweetSpace(clientV11, currentStatus, space, user)
 	if err != nil {
 		return err
 	}
@@ -212,7 +256,7 @@ func (c *Command) notifySpace(dbClient *db.Client, clientV11 *twitter11.Client, 
 	return nil
 }
 
-func (c *Command) getNotificationStatus(space *twitter2.Space) (db.SpaceNotificationStatus, error) {
+func (w *watcher) getNotificationStatus(space *twitter2.Space) (db.SpaceNotificationStatus, error) {
 	if space.State == nil {
 		return db.SpaceNotificationStatus_NONE, errors.New("invalid space info")
 	}
@@ -224,15 +268,15 @@ func (c *Command) getNotificationStatus(space *twitter2.Space) (db.SpaceNotifica
 
 		// リマインド通知が有効で、リマインド時間を過ぎていればリマインド
 		start := *space.ScheduledStart
-		if c.Config.Bot.Notification.ScheduleRemind.Enabled {
-			reminderTime := start.Add(-time.Duration(*c.Config.Bot.Notification.ScheduleRemind.Before) * time.Second)
+		if w.config.Bot.Notification.ScheduleRemind.Enabled {
+			reminderTime := start.Add(-time.Duration(*w.config.Bot.Notification.ScheduleRemind.Before) * time.Second)
 			if time.Now().After(reminderTime) {
 				return db.SpaceNotificationStatus_SCHEDULE_REMIND, nil
 			}
 		}
 
 		// スケジュール作成通知が有効
-		if c.Config.Bot.Notification.Schedule.Enabled {
+		if w.config.Bot.Notification.Schedule.Enabled {
 			return db.SpaceNotificationStatus_SCHEDULE, nil
 		}
 
@@ -245,17 +289,17 @@ func (c *Command) getNotificationStatus(space *twitter2.Space) (db.SpaceNotifica
 	return db.SpaceNotificationStatus_NONE, nil
 }
 
-func (c *Command) tweetSpace(clientV11 *twitter11.Client, status db.SpaceNotificationStatus, space *twitter2.Space, user *twitter2.User) (int64, error) {
+func (w *watcher) tweetSpace(clientV11 *twitter11.Client, status db.SpaceNotificationStatus, space *twitter2.Space, user *twitter2.User) (int64, error) {
 	var template string
 	switch status {
 	case db.SpaceNotificationStatus_SCHEDULE:
-		template = *c.Config.Bot.Notification.Schedule.Message
+		template = *w.config.Bot.Notification.Schedule.Message
 		break
 	case db.SpaceNotificationStatus_SCHEDULE_REMIND:
-		template = *c.Config.Bot.Notification.ScheduleRemind.Message
+		template = *w.config.Bot.Notification.ScheduleRemind.Message
 		break
 	case db.SpaceNotificationStatus_START:
-		template = *c.Config.Bot.Notification.Start.Message
+		template = *w.config.Bot.Notification.Start.Message
 		break
 	default:
 		return 0, errors.New("invalid notification status")
@@ -269,20 +313,20 @@ func (c *Command) tweetSpace(clientV11 *twitter11.Client, status db.SpaceNotific
 	if err != nil {
 		return 0, err
 	}
-	c.Logger.Infow("tweet completed", "message", message)
+	w.logger.Infow("tweet completed", "message", message)
 	return tweet.ID, nil
 }
 
-func (c *Command) StartHealthCheckServer(port int) {
+func (w *watcher) startHealthCheckServer(port int) {
 	go func() {
 		address := fmt.Sprintf(":%d", port)
-		c.Logger.Infow("start http server for health check", "address", address)
+		w.logger.Infow("start http server for health check", "address", address)
 		err := http.ListenAndServe(address, http.HandlerFunc(func(res http.ResponseWriter, r *http.Request) {
-			c.Logger.Infow("health check access", "uri", r.RequestURI, "remote_addr", r.RemoteAddr)
+			w.logger.Infow("health check access", "uri", r.RequestURI, "remote_addr", r.RemoteAddr)
 			res.WriteHeader(http.StatusOK)
 		}))
 		if err != nil {
-			c.Logger.Infow("http server for health check failed", "address", address, "error", err)
+			w.logger.Infow("http server for health check failed", "address", address, "error", err)
 		}
 	}()
 }

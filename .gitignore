@@ -15,5 +15,6 @@
 # vendor/
 
 *.db
+*.log
 config.yaml
 

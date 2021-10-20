@@ -28,8 +28,8 @@ import (
 	twitter2 "github.com/qitoi/space-watcher/twitter"
 )
 
-func (c *Command) InitializeToken() error {
-	auth := oauth1.NewAuth(c.Config.Twitter.ConsumerKey, c.Config.Twitter.ConsumerSecret)
+func InitializeToken(config *Config) error {
+	auth := oauth1.NewAuth(config.Twitter.ConsumerKey, config.Twitter.ConsumerSecret)
 	url, err := auth.GetAuthorizationURL("oob")
 
 	if err != nil {
@@ -61,7 +61,7 @@ func (c *Command) InitializeToken() error {
 		return err
 	}
 
-	bearerToken, err := twitter2.GetBearerToken(c.Config.Twitter.ConsumerKey, c.Config.Twitter.ConsumerSecret)
+	bearerToken, err := twitter2.GetBearerToken(config.Twitter.ConsumerKey, config.Twitter.ConsumerSecret)
 	if err != nil {
 		return err
 	}
@@ -73,11 +73,11 @@ func (c *Command) InitializeToken() error {
 		return err
 	}
 
-	config := *c.Config
-	config.Twitter.AccessToken = accessToken
-	config.Twitter.AccessSecret = accessSecret
-	config.Twitter.BearerToken = bearerToken
-	config.Twitter.UserID = user.ID
+	newConfig := *config
+	newConfig.Twitter.AccessToken = accessToken
+	newConfig.Twitter.AccessSecret = accessSecret
+	newConfig.Twitter.BearerToken = bearerToken
+	newConfig.Twitter.UserID = user.ID
 
-	return SaveConfig(config)
+	return SaveConfig(newConfig)
 }

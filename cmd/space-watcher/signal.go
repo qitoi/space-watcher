@@ -1,3 +1,5 @@
+//go:build !windows
+
 /*
  *  Copyright 2021 qitoi
  *
@@ -19,40 +21,22 @@ package main
 import (
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/spf13/pflag"
+	"github.com/qitoi/space-watcher/logger"
 )
 
-func main() {
-	var init bool
-	var help bool
+func startSignalHandler(logger *logger.Logger) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGUSR1)
 
-	pflag.BoolVarP(&init, "init", "", false, "initialize token")
-	pflag.BoolVarP(&help, "help", "h", false, "help")
-
-	pflag.Parse()
-
-	if help {
-		pflag.Usage()
-		os.Exit(0)
-	}
-
-	config, err := LoadConfig()
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := CheckMinimalValidConfig(config); err != nil {
-		log.Fatal(err)
-	}
-
-	if init {
-		if err := InitializeToken(config); err != nil {
-			log.Fatal(err)
+	go func() {
+		for range ch {
+			err := logger.Reopen()
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
-		os.Exit(0)
-	}
-
-	if err := Start(config); err != nil {
-		log.Fatal(err)
-	}
+	}()
 }

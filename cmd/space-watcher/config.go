@@ -58,10 +58,16 @@ type HealthCheckConfig struct {
 	Port    *int `yaml:"port,omitempty"`
 }
 
+type LoggerConfig struct {
+	Info  *string `yaml:"info"`
+	Error *string `yaml:"error"`
+}
+
 type Config struct {
 	Twitter     TwitterConfig     `yaml:"twitter"`
 	Bot         BotConfig         `yaml:"bot"`
 	HealthCheck HealthCheckConfig `yaml:"healthcheck_server"`
+	Logger      *LoggerConfig     `yaml:"logger,omitempty"`
 }
 
 func SaveConfig(config Config) error {
@@ -93,7 +99,7 @@ func LoadConfig() (*Config, error) {
 	return config, nil
 }
 
-func CheckMinimalValidConfig(config Config) error {
+func CheckMinimalValidConfig(config *Config) error {
 	if config.Twitter.ConsumerKey == "" {
 		return errors.New("invalid config: twitter.consumer_key")
 	}
@@ -103,7 +109,7 @@ func CheckMinimalValidConfig(config Config) error {
 	return nil
 }
 
-func CheckValidConfig(config Config) error {
+func CheckValidConfig(config *Config) error {
 	if config.Twitter.ConsumerKey == "" {
 		return errors.New("invalid config: twitter.consumer_key")
 	}
@@ -164,6 +170,18 @@ func CheckValidConfig(config Config) error {
 	}
 	if config.HealthCheck.Port != nil && (*config.HealthCheck.Port <= 0 || *config.HealthCheck.Port > 65535) {
 		return errors.New("invalid config: healthcheck.port")
+	}
+
+	// Logger
+	if config.Logger != nil && config.Logger.Info != nil {
+		if *config.Logger.Info == "" {
+			return errors.New("invalid config: logger.info")
+		}
+	}
+	if config.Logger != nil && config.Logger.Error != nil {
+		if *config.Logger.Error == "" {
+			return errors.New("invalid config: logger.error")
+		}
 	}
 
 	return nil

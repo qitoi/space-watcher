@@ -1,3 +1,5 @@
+//go:build windows
+
 /*
  *  Copyright 2021 qitoi
  *
@@ -17,10 +19,8 @@
 package main
 
 import (
-	"go.uber.org/zap"
+	"github.com/qitoi/space-watcher/logger"
 )
 
-type Command struct {
-	Config *Config
-	Logger *zap.SugaredLogger
+func startSignalHandler(*logger.Logger) {
 }
