@@ -20,6 +20,7 @@ import (
 	"errors"
 	"os"
 
+	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v3"
 )
 
@@ -58,16 +59,36 @@ type HealthCheckConfig struct {
 	Port    *int `yaml:"port,omitempty"`
 }
 
+type LogLevel zapcore.Level
+
+func (l *LogLevel) MarshalYAML() (interface{}, error) {
+	return zapcore.Level(*l).MarshalText()
+}
+
+func (l *LogLevel) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var s string
+	if err := unmarshal(&s); err != nil {
+		return err
+	}
+	var level zapcore.Level
+	if err := level.UnmarshalText([]byte(s)); err != nil {
+		return err
+	}
+	*l = LogLevel(level)
+	return nil
+}
+
 type LoggerConfig struct {
-	Info  *string `yaml:"info"`
-	Error *string `yaml:"error"`
+	Level *LogLevel `yaml:"level"`
+	Info  *string   `yaml:"info"`
+	Error *string   `yaml:"error"`
 }
 
 type Config struct {
 	Twitter     TwitterConfig     `yaml:"twitter"`
 	Bot         BotConfig         `yaml:"bot"`
 	HealthCheck HealthCheckConfig `yaml:"healthcheck_server"`
-	Logger      *LoggerConfig     `yaml:"logger,omitempty"`
+	Logger      LoggerConfig      `yaml:"logger"`
 }
 
 func SaveConfig(config Config) error {
@@ -173,12 +194,12 @@ func CheckValidConfig(config *Config) error {
 	}
 
 	// Logger
-	if config.Logger != nil && config.Logger.Info != nil {
+	if config.Logger.Info != nil {
 		if *config.Logger.Info == "" {
 			return errors.New("invalid config: logger.info")
 		}
 	}
-	if config.Logger != nil && config.Logger.Error != nil {
+	if config.Logger.Error != nil {
 		if *config.Logger.Error == "" {
 			return errors.New("invalid config: logger.error")
 		}

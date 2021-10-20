@@ -29,6 +29,7 @@ import (
 
 	twitter11 "github.com/dghubble/go-twitter/twitter"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/qitoi/space-watcher/bot"
 	"github.com/qitoi/space-watcher/db"
@@ -107,7 +108,7 @@ func Start(config *Config) error {
 func getLogger(config *Config) (*logger.Logger, error) {
 	var err error
 	infoLog := logger.Wrap(os.Stdout)
-	if config.Logger != nil && config.Logger.Info != nil {
+	if config.Logger.Info != nil {
 		infoLog, err = logger.OpenFile(*config.Logger.Info, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
 			return nil, err
@@ -115,14 +116,14 @@ func getLogger(config *Config) (*logger.Logger, error) {
 	}
 
 	errorLog := logger.Wrap(os.Stderr)
-	if config.Logger != nil && config.Logger.Error != nil {
+	if config.Logger.Error != nil {
 		errorLog, err = logger.OpenFile(*config.Logger.Error, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return logger.New(infoLog, errorLog), nil
+	return logger.New(infoLog, errorLog, zapcore.Level(*config.Logger.Level)), nil
 }
 
 func (w *watcher) startWatch(ctx context.Context, creatorIDs []string) {

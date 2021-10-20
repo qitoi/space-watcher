@@ -27,12 +27,12 @@ type Logger struct {
 	error WriteSyncReopener
 }
 
-func New(info, error WriteSyncReopener) *Logger {
-	highPriority := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
-		return level >= zapcore.WarnLevel
+func New(info, error WriteSyncReopener, level zapcore.Level) *Logger {
+	highPriority := zap.LevelEnablerFunc(func(lv zapcore.Level) bool {
+		return lv >= zapcore.WarnLevel && lv >= level
 	})
-	lowPriority := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
-		return level < zapcore.WarnLevel
+	lowPriority := zap.LevelEnablerFunc(func(lv zapcore.Level) bool {
+		return lv < zapcore.WarnLevel && lv >= level
 	})
 
 	encoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
