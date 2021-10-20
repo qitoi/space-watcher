@@ -83,6 +83,8 @@ func Start(config *Config) error {
 		dbClient:  dbClient,
 	}
 
+	w.logger.Infow("start", "bot_id", w.config.Twitter.UserID)
+
 	// monitoring target = followings
 	ids, err := w.getFollowings(config.Twitter.UserID)
 	if err != nil {
