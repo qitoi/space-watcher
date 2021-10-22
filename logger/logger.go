@@ -35,7 +35,9 @@ func New(info, error WriteSyncReopener, level zapcore.Level) *Logger {
 		return lv < zapcore.WarnLevel && lv >= level
 	})
 
-	encoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.EncodeTime = zapcore.RFC3339NanoTimeEncoder
+	encoder := zapcore.NewJSONEncoder(encoderConfig)
 	stdoutSyncer := zapcore.Lock(info)
 	stderrSyncer := zapcore.Lock(error)
 
