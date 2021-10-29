@@ -65,15 +65,15 @@ type HealthCheckConfig struct {
 }
 
 type LoggerConfig struct {
-	Level *LogLevel `yaml:"level"`
-	Info  *string   `yaml:"info"`
-	Error *string   `yaml:"error"`
+	Level LogLevel `yaml:"level"`
+	Info  *string  `yaml:"info,omitempty"`
+	Error *string  `yaml:"error,omitempty"`
 }
 
 type LogLevel zapcore.Level
 
-func (l *LogLevel) MarshalYAML() (interface{}, error) {
-	return zapcore.Level(*l).MarshalText()
+func (l LogLevel) MarshalYAML() (interface{}, error) {
+	return zapcore.Level(l).String(), nil
 }
 
 func (l *LogLevel) UnmarshalYAML(unmarshal func(interface{}) error) error {

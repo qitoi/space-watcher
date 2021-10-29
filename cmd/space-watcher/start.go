@@ -125,7 +125,7 @@ func getLogger(config *Config) (*logger.Logger, error) {
 		}
 	}
 
-	return logger.New(infoLog, errorLog, zapcore.Level(*config.Logger.Level)), nil
+	return logger.New(infoLog, errorLog, zapcore.Level(config.Logger.Level)), nil
 }
 
 func (w *watcher) startWatch(ctx context.Context, creatorIDs []string) {
