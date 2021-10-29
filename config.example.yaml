@@ -1,22 +1,21 @@
 twitter:
     consumer_key: YOUR_CONSUMER_KEY
     consumer_secret: YOUR_CONSUMER_SECRET
-bot:
+event:
     watch_interval: 5
-    notification:
-        schedule:
-            enabled: true
+    schedule:
+        notification:
             message: |
                 {{.User.Name | escape}} さんが {{.Space.ScheduledStart.Local.Format "2006/01/02 15:04 MST"}} にスペースをスケジュールしました
                 {{.URL}}
-        schedule_remind:
-            enabled: false
-            before: 1800
+    schedule_remind:
+        before: 1800
+        notification:
             message: |
                 {{.User.Name | escape}} さんのスペースが {{.Space.ScheduledStart.Local.Format "2006/01/02 15:04 MST"}} にスケジュールされています
                 {{.URL}}
-        start:
-            enabled: true
+    start:
+        notification:
             message: |
                 {{.User.Name | escape}} さんがスペースを開始しました
                 {{.URL}}

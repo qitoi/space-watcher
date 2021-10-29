@@ -34,13 +34,13 @@ func TestEscapeMessage(t *testing.T) {
 func TestGetTweetMessage(t *testing.T) {
 
 	message := "{{.User.Name | escape}} starts Spaces {{.URL}}"
-	actual, err := GetTweetMessage(
+	actual, err := RenderTemplate(
 		message,
-		twitter2.Space{
+		&twitter2.Space{
 			ID:    "spaceid",
 			Title: "SPACE_TITLE",
 		},
-		twitter2.User{
+		&twitter2.User{
 			Name: "UserName@test",
 		},
 	)

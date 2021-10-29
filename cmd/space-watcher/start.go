@@ -130,7 +130,7 @@ func getLogger(config *Config) (*logger.Logger, error) {
 
 func (w *watcher) startWatch(ctx context.Context, creatorIDs []string) {
 	// interval [s]
-	baseInterval := w.config.Bot.WatchInterval
+	baseInterval := w.config.Event.WatchInterval
 	interval := baseInterval
 
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
@@ -218,7 +218,7 @@ func (w *watcher) processSpaces(spaces []twitter2.Space, users map[string]twitte
 		u := users[s.CreatorID]
 		go func() {
 			defer wg.Done()
-			ch <- w.notifySpace(&s, &u)
+			ch <- w.processSpace(&s, &u)
 		}()
 	}
 
@@ -238,7 +238,7 @@ func (w *watcher) processSpaces(spaces []twitter2.Space, users map[string]twitte
 	return err
 }
 
-func (w *watcher) notifySpace(space *twitter2.Space, user *twitter2.User) error {
+func (w *watcher) processSpace(space *twitter2.Space, user *twitter2.User) error {
 	currentStatus, err := w.getNotificationStatus(space)
 	if err != nil {
 		return err
@@ -252,8 +252,13 @@ func (w *watcher) notifySpace(space *twitter2.Space, user *twitter2.User) error 
 
 	w.logger.Infow("notify", "space", *space, "user", *user, "status", currentStatus)
 
-	_, err = w.tweetSpace(currentStatus, space, user)
-	if err != nil {
+	// exec command
+	if err := w.execCommand(currentStatus, space, user); err != nil {
+		return err
+	}
+
+	// tweet
+	if err := w.tweetSpace(currentStatus, space, user); err != nil {
 		return err
 	}
 
@@ -281,15 +286,15 @@ func (w *watcher) getNotificationStatus(space *twitter2.Space) (db.SpaceNotifica
 
 		// リマインド通知が有効で、リマインド時間を過ぎていればリマインド
 		start := *space.ScheduledStart
-		if w.config.Bot.Notification.ScheduleRemind.Enabled {
-			reminderTime := start.Add(-time.Duration(*w.config.Bot.Notification.ScheduleRemind.Before) * time.Second)
+		if w.config.Event.ScheduleRemind != nil {
+			reminderTime := start.Add(-time.Duration(w.config.Event.ScheduleRemind.Before) * time.Second)
 			if time.Now().After(reminderTime) {
 				return db.SpaceNotificationStatus_SCHEDULE_REMIND, nil
 			}
 		}
 
 		// スケジュール作成通知が有効
-		if w.config.Bot.Notification.Schedule.Enabled {
+		if w.config.Event.Schedule != nil {
 			return db.SpaceNotificationStatus_SCHEDULE, nil
 		}
 
@@ -302,32 +307,83 @@ func (w *watcher) getNotificationStatus(space *twitter2.Space) (db.SpaceNotifica
 	return db.SpaceNotificationStatus_NONE, nil
 }
 
-func (w *watcher) tweetSpace(status db.SpaceNotificationStatus, space *twitter2.Space, user *twitter2.User) (int64, error) {
-	var template string
+func (w *watcher) tweetSpace(status db.SpaceNotificationStatus, space *twitter2.Space, user *twitter2.User) error {
+	var conf *EventItemConfig
 	switch status {
 	case db.SpaceNotificationStatus_SCHEDULE:
-		template = *w.config.Bot.Notification.Schedule.Message
+		conf = w.config.Event.Schedule
 		break
 	case db.SpaceNotificationStatus_SCHEDULE_REMIND:
-		template = *w.config.Bot.Notification.ScheduleRemind.Message
+		conf = w.config.Event.ScheduleRemind
 		break
 	case db.SpaceNotificationStatus_START:
-		template = *w.config.Bot.Notification.Start.Message
+		conf = w.config.Event.Start
 		break
 	default:
-		return 0, errors.New("invalid notification status")
+		return errors.New("invalid notification status")
 	}
 
-	message, err := bot.GetTweetMessage(template, space, user)
+	if conf == nil || conf.Notification == nil {
+		return nil
+	}
+
+	template := conf.Notification.Message
+	message, err := bot.RenderTemplate(template, space, user)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	tweet, _, err := w.clientV11.Statuses.Update(message, nil)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	w.logger.Infow("tweet completed", "message", message)
-	return tweet.ID, nil
+	w.logger.Infow("tweet completed", "message", message, "tweet_id", tweet.ID)
+	return nil
+}
+
+func (w *watcher) execCommand(status db.SpaceNotificationStatus, space *twitter2.Space, user *twitter2.User) error {
+	var conf *EventItemConfig
+	switch status {
+	case db.SpaceNotificationStatus_SCHEDULE:
+		conf = w.config.Event.Schedule
+		break
+	case db.SpaceNotificationStatus_SCHEDULE_REMIND:
+		conf = w.config.Event.ScheduleRemind
+		break
+	case db.SpaceNotificationStatus_START:
+		conf = w.config.Event.Start
+		break
+	default:
+		return errors.New("invalid notification status")
+	}
+
+	if conf == nil || conf.Command == nil {
+		return nil
+	}
+
+	go func() {
+		args := make([]string, len(conf.Command.Args))
+		for i, s := range conf.Command.Args {
+			arg, err := bot.RenderTemplate(s, space, user)
+			if err != nil {
+				w.logger.Errorw("command build error", "error", err)
+				return
+			}
+			args[i] = arg
+		}
+
+		cmd := createCommand(conf.Command.Name, args)
+		cmd.Dir = conf.Command.WorkingDirectory
+
+		w.logger.Infow("command start", "command", cmd.String())
+		if err := cmd.Run(); err != nil {
+			w.logger.Errorw("command exec error", "error", err)
+			return
+		}
+
+		w.logger.Infow("command completed", "command", cmd.String(), "code", cmd.ProcessState.ExitCode())
+	}()
+
+	return nil
 }
 
 func (w *watcher) startHealthCheckServer(port int) {

@@ -44,7 +44,7 @@ loop:
 	return strings.NewReplacer(reps...).Replace(message)
 }
 
-func GetTweetMessage(message string, space *twitter2.Space, user *twitter2.User) (string, error) {
+func RenderTemplate(message string, space *twitter2.Space, user *twitter2.User) (string, error) {
 	url := twitter2.GetSpaceURL(space.ID)
 
 	t, err := template.New("message").

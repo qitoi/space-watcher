@@ -24,6 +24,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type Config struct {
+	Twitter     TwitterConfig     `yaml:"twitter"`
+	Event       EventConfig       `yaml:"event"`
+	HealthCheck HealthCheckConfig `yaml:"healthcheck_server"`
+	Logger      LoggerConfig      `yaml:"logger"`
+}
+
 type TwitterConfig struct {
 	ConsumerKey    string `yaml:"consumer_key"`
 	ConsumerSecret string `yaml:"consumer_secret"`
@@ -33,30 +40,34 @@ type TwitterConfig struct {
 	UserID         int64  `yaml:"user_id"`
 }
 
-type BotConfig struct {
-	WatchInterval int64              `yaml:"watch_interval"`
-	Notification  NotificationConfig `yaml:"notification"`
+type EventConfig struct {
+	WatchInterval  int64            `yaml:"watch_interval"`
+	Schedule       *EventItemConfig `yaml:"schedule,omitempty"`
+	ScheduleRemind *EventItemConfig `yaml:"schedule_remind,omitempty"`
+	Start          *EventItemConfig `yaml:"start,omitempty"`
 }
 
-type NotificationConfig struct {
-	Schedule struct {
-		Enabled bool    `yaml:"enabled"`
-		Message *string `yaml:"message,omitempty"`
-	} `yaml:"schedule"`
-	ScheduleRemind struct {
-		Enabled bool    `yaml:"enabled"`
-		Before  *int64  `yaml:"before,omitempty"`
-		Message *string `yaml:"message,omitempty"`
-	} `yaml:"schedule_remind"`
-	Start struct {
-		Enabled bool    `yaml:"enabled"`
-		Message *string `yaml:"message,omitempty"`
-	} `yaml:"start"`
+type EventItemConfig struct {
+	Before       int64 `yaml:"before,omitempty"`
+	Notification *struct {
+		Message string `yaml:"message,omitempty"`
+	} `yaml:"notification,omitempty"`
+	Command *struct {
+		Name             string   `yaml:"name"`
+		Args             []string `yaml:"args"`
+		WorkingDirectory string   `yaml:"working_directory"`
+	} `yaml:"command,omitempty"`
 }
 
 type HealthCheckConfig struct {
 	Enabled bool `yaml:"enabled"`
 	Port    *int `yaml:"port,omitempty"`
+}
+
+type LoggerConfig struct {
+	Level *LogLevel `yaml:"level"`
+	Info  *string   `yaml:"info"`
+	Error *string   `yaml:"error"`
 }
 
 type LogLevel zapcore.Level
@@ -76,19 +87,6 @@ func (l *LogLevel) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	*l = LogLevel(level)
 	return nil
-}
-
-type LoggerConfig struct {
-	Level *LogLevel `yaml:"level"`
-	Info  *string   `yaml:"info"`
-	Error *string   `yaml:"error"`
-}
-
-type Config struct {
-	Twitter     TwitterConfig     `yaml:"twitter"`
-	Bot         BotConfig         `yaml:"bot"`
-	HealthCheck HealthCheckConfig `yaml:"healthcheck_server"`
-	Logger      LoggerConfig      `yaml:"logger"`
 }
 
 func SaveConfig(config Config) error {
@@ -149,40 +147,62 @@ func CheckValidConfig(config *Config) error {
 	if config.Twitter.UserID == 0 {
 		return errors.New("invalid config: twitter.user_id")
 	}
-	if config.Bot.WatchInterval == 0 {
+	if config.Event.WatchInterval == 0 {
 		return errors.New("invalid config: bot.watch_interval")
 	}
 
-	notif := &config.Bot.Notification
-
 	// Schedule
-	if notif.Schedule.Enabled && notif.Schedule.Message == nil {
-		return errors.New("config not found: bot.notification.schedule.message")
-	}
-	if notif.Schedule.Message != nil && *notif.Schedule.Message == "" {
-		return errors.New("invalid config: bot.notification.schedule.message")
+	if schedule := config.Event.Schedule; schedule != nil {
+		if notif := schedule.Notification; notif != nil {
+			if notif.Message == "" {
+				return errors.New("invalid config: event.schedule.notification.message")
+			}
+		}
+		if cmd := schedule.Command; cmd != nil {
+			if cmd.Name == "" {
+				return errors.New("invalid config: event.schedule.command.name")
+			}
+			if cmd.WorkingDirectory == "" {
+				return errors.New("invalid config: event.schedule.command.working_directory")
+			}
+		}
 	}
 
 	// ScheduleRemind
-	if notif.ScheduleRemind.Enabled && notif.ScheduleRemind.Before == nil {
-		return errors.New("config not found: bot.notification.schedule_remind.before")
-	}
-	if notif.ScheduleRemind.Before != nil && *notif.ScheduleRemind.Before <= 0 {
-		return errors.New("invalid config: bot.notification.schedule_remind.before")
-	}
-	if notif.ScheduleRemind.Enabled && notif.ScheduleRemind.Message == nil {
-		return errors.New("config not found: bot.notification.schedule_remind.message")
-	}
-	if notif.ScheduleRemind.Message != nil && *notif.ScheduleRemind.Message == "" {
-		return errors.New("invalid config: bot.notification.schedule_remind.message")
+	if scheduleRemind := config.Event.ScheduleRemind; scheduleRemind != nil {
+		if scheduleRemind.Before <= 0 {
+			return errors.New("invalid config: event.schedule_remind.notification.before")
+		}
+		if notif := scheduleRemind.Notification; notif != nil {
+			if notif.Message == "" {
+				return errors.New("invalid config: event.schedule_remind.notification.message")
+			}
+		}
+		if cmd := scheduleRemind.Command; cmd != nil {
+			if cmd.Name == "" {
+				return errors.New("invalid config: event.schedule_remind.command.name")
+			}
+			if cmd.WorkingDirectory == "" {
+				return errors.New("invalid config: event.schedule_remind.command.working_directory")
+			}
+		}
 	}
 
 	// Start
-	if notif.Start.Enabled && notif.Start.Message == nil {
-		return errors.New("config not found: bot.notification.start.message")
-	}
-	if notif.Start.Message != nil && *notif.Start.Message == "" {
-		return errors.New("invalid config: bot.notification.start.message")
+	if start := config.Event.Start; start != nil {
+		if notif := start.Notification; notif != nil {
+			if notif.Message == "" {
+				return errors.New("invalid config: event.start.notification.message")
+			}
+		}
+		if cmd := start.Command; cmd != nil {
+			if cmd.Name == "" {
+				return errors.New("invalid config: event.start.command.name")
+			}
+			if cmd.WorkingDirectory == "" {
+				return errors.New("invalid config: event.start.command.working_directory")
+			}
+		}
 	}
 
 	// HealthCheck
