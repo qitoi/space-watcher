@@ -56,6 +56,7 @@ type EventItemConfig struct {
 		Name             string   `yaml:"name"`
 		Args             []string `yaml:"args"`
 		WorkingDirectory string   `yaml:"working_directory"`
+		CaptureStderr    bool     `yaml:"capture_stderr"`
 	} `yaml:"command,omitempty"`
 }
 

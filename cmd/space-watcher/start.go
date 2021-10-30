@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -371,12 +372,17 @@ func (w *watcher) execCommand(status db.SpaceNotificationStatus, space *twitter2
 			args[i] = arg
 		}
 
+		stderr := &bytes.Buffer{}
 		cmd := createCommand(conf.Command.Name, args)
 		cmd.Dir = conf.Command.WorkingDirectory
 
+		if conf.Command.CaptureStderr {
+			cmd.Stderr = stderr
+		}
+
 		w.logger.Infow("command start", "command", cmd.String())
 		if err := cmd.Run(); err != nil {
-			w.logger.Errorw("command exec error", "error", err)
+			w.logger.Errorw("command exec error", "error", err, "stderr", stderr.String())
 			return
 		}
 
